@@ -10,7 +10,10 @@ import { TitlebarButton } from "./components/TitlebarButton";
 import { useSettingsStore } from "./store/settings";
 
 function App() {
-  const [megaLink] = useState("https://story.idealcanayavefe.com/update.zip");
+  const [megaLink] = useState("");
+  const [manifestUrl] = useState(
+    "https://story.idealcanayavefe.com/manifest.json"
+  );
   const [folderPath, setFolderPath] = useState("");
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadedBytes, setDownloadedBytes] = useState(0);
@@ -70,16 +73,26 @@ function App() {
   }, [isSettingsOpen]);
 
   useEffect(() => {
-    // Existing download progress listener
+    // Updated download progress listener to handle both old and new formats
     const unlistenDownload = listen("download_progress", (event) => {
-      const data = event.payload as {
-        percent: number;
-        downloaded: number;
-        total: number;
-      };
-      setDownloadProgress(data.percent);
-      setDownloadedBytes(data.downloaded);
-      setTotalBytes(data.total);
+      const data = event.payload as any;
+
+      // Handle new manifest-based format
+      if (data.stage) {
+        setCurrentFile(data.filename || data.message || "");
+        if (data.current && data.total) {
+          const progressPercent = Math.round((data.current / data.total) * 100);
+          setDownloadProgress(progressPercent);
+        } else if (data.percent !== undefined) {
+          setDownloadProgress(data.percent);
+        }
+      }
+      // Handle legacy format
+      else if (data.percent !== undefined && data.downloaded !== undefined) {
+        setDownloadProgress(data.percent);
+        setDownloadedBytes(data.downloaded);
+        setTotalBytes(data.total);
+      }
     });
 
     // New extraction progress listener
@@ -152,9 +165,11 @@ function App() {
 
   async function checkForUpdates() {
     try {
-      // Only check if an update is available without downloading
-      const updateInfo = await invoke("check_for_updates", {
-        downloadUrl: megaLink,
+      const path = await getPollyMCInstancePath();
+      // Check for manifest-based updates
+      const updateInfo = await invoke("check_manifest_updates", {
+        manifestUrl: manifestUrl,
+        instanceBase: path,
       });
       setStatusMessage(`Update status: ${updateInfo}`);
     } catch (error) {
@@ -165,6 +180,8 @@ function App() {
   async function downloadUpdate() {
     setIsDownloading(true);
     setStatusMessage("Downloading update...");
+    setDownloadProgress(0);
+    setCurrentFile("");
 
     try {
       const randomSuffix = Math.random().toString(36).substring(2, 15);
@@ -178,6 +195,31 @@ function App() {
       setStatusMessage("Download complete!");
     } catch (error) {
       setStatusMessage(`Error downloading update: ${error}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  }
+
+  async function downloadFromManifest() {
+    setIsDownloading(true);
+    setStatusMessage("Downloading from manifest...");
+    setDownloadProgress(0);
+    setCurrentFile("");
+
+    try {
+      const path = await getPollyMCInstancePath();
+      const result = await invoke("download_from_manifest", {
+        manifestUrl: manifestUrl,
+        instanceBase: path,
+      });
+      console.log("Manifest download result:", result);
+      setStatusMessage("Manifest download complete!");
+      setDownloadProgress(100);
+      setCurrentFile("");
+      // Re-check after download
+      await runCheck();
+    } catch (error) {
+      setStatusMessage(`Error downloading from manifest: ${error}`);
     } finally {
       setIsDownloading(false);
     }
@@ -245,8 +287,8 @@ function App() {
                 <Button onClick={checkForUpdates} color="gray">
                   Check for Updates
                 </Button>
-                <Button onClick={downloadUpdate} color="blue">
-                  Update
+                <Button onClick={downloadFromManifest} color="blue">
+                  Update from Manifest
                 </Button>
               </div>
             )}
@@ -274,20 +316,32 @@ function App() {
           {/* Show progress bars when relevant */}
           {isDownloading && !isExtracting && (
             <div className="space-y-4">
-              {isDownloading && (
-                <div>
-                  <h3 className="font-bold">Download Progress</h3>
-                  <progress
-                    className="w-full"
-                    value={downloadProgress}
-                    max="100"
-                  ></progress>
+              <div>
+                <h3 className="font-bold">Download Progress</h3>
+                <progress
+                  className="w-full"
+                  value={downloadProgress}
+                  max="100"
+                ></progress>
+
+                {totalBytes > 0 && (
                   <p>
-                    {downloadProgress.toFixed(1)}% - {formatMB(downloadedBytes)}{" "}
-                    MB / {formatMB(totalBytes)} MB
+                    <span>
+                      {" "}
+                      - {formatMB(downloadedBytes)} MB / {formatMB(totalBytes)}{" "}
+                      MB
+                    </span>
                   </p>
-                </div>
-              )}
+                )}
+
+                {currentFile && (
+                  <p className="text-sm truncate mt-2">
+                    {downloadProgress.toFixed(1)}% -{" "}
+                    <span className="font-semibold">Current file:</span>{" "}
+                    {currentFile}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
