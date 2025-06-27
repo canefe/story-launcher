@@ -10,7 +10,6 @@ import { TitlebarButton } from "./components/TitlebarButton";
 import { useSettingsStore } from "./store/settings";
 
 function App() {
-  const [megaLink] = useState("");
   const [manifestUrl] = useState(
     "https://story.idealcanayavefe.com/manifest.json"
   );
