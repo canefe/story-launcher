@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import Background from "./assets/bg.jpg";
 import { listen } from "@tauri-apps/api/event";
 import { homeDir } from "@tauri-apps/api/path";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { SettingsModal } from "./components/SettingsModal";
+import { TitlebarButton } from "./components/TitlebarButton";
+import { useSettingsStore } from "./store/settings";
 
 function App() {
   const [megaLink] = useState("https://story.idealcanayavefe.com/update.zip");
@@ -19,8 +24,50 @@ function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [instanceExists, setInstanceExists] = useState(false);
+  const [baseInstalled, setBaseInstalled] = useState(false);
+
+  const { instanceFolderName } = useSettingsStore();
+
+  const appWindow = getCurrentWindow();
+
+  useEffect(() => {
+    // Function to make window draggable by the titlebar
+    const makeDraggable = () => {
+      const titlebar = document.getElementById("titlebar");
+
+      if (titlebar) {
+        titlebar.addEventListener("mousedown", (e) => {
+          // Only process primary button clicks (left mouse button)
+          if (e.buttons !== 1) return;
+
+          // Don't drag if clicking on a button element
+          const target = e.target as HTMLElement;
+          if (target.closest(".titlebar-button")) return;
+
+          console.log("Starting drag operation");
+          appWindow.startDragging();
+        });
+      }
+    };
+
+    // Set a short timeout to ensure DOM is fully loaded
+    const timeoutId = setTimeout(makeDraggable, 100);
+
+    // Clean up
+    return () => {
+      clearTimeout(timeoutId);
+      // We don't remove the event listener since the component re-renders often
+      // and the titlebar is a static element that persists
+    };
+  }, []);
+
+  useEffect(() => {
+    runCheck();
+    checkForUpdates();
+  }, [isSettingsOpen]);
 
   useEffect(() => {
     // Existing download progress listener
@@ -56,6 +103,15 @@ function App() {
     };
   }, []);
 
+  // Every 10 seconds, check instance status
+  useEffect(() => {
+    const interval = setInterval(() => {
+      runCheck();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [instanceExists, folderPath, instanceFolderName]);
+
   // Helper function to format bytes as MB with 2 decimal places
   const formatMB = (bytes: number) => {
     return (bytes / (1024 * 1024)).toFixed(2);
@@ -64,17 +120,34 @@ function App() {
   async function checkStoryInstance(folderBase: string) {
     const result = await invoke("check_story_instance", {
       instanceBase: folderBase,
+      folderName: instanceFolderName,
     });
     console.log("Instance check result:", result);
     setInstanceExists(result as boolean);
-    setFolderPath(folderBase + "Story\\.minecraft");
+    setFolderPath(folderBase + instanceFolderName + "\\.minecraft");
+    if (result) {
+      const baseInstalled = await isBaseInstalled();
+      setBaseInstalled(baseInstalled);
+    } else {
+      setBaseInstalled(false);
+    }
   }
 
   async function createStoryInstance(folderBase: string) {
     const result = await invoke("create_story_instance", {
       instanceBase: folderBase,
+      folderName: instanceFolderName,
     });
     console.log("Create instance result:", result);
+  }
+
+  async function isBaseInstalled(): Promise<boolean> {
+    console.log("Checking if base is installed at:", folderPath + "\\mods");
+    const result = await invoke("is_base_installed", {
+      instanceBase: folderPath + "\\mods\\",
+    });
+    console.log("Base installed check result:", result);
+    return result as boolean;
   }
 
   async function checkForUpdates() {
@@ -86,6 +159,27 @@ function App() {
       setStatusMessage(`Update status: ${updateInfo}`);
     } catch (error) {
       setStatusMessage(`Error checking for updates: ${error}`);
+    }
+  }
+
+  async function downloadUpdate() {
+    setIsDownloading(true);
+    setStatusMessage("Downloading update...");
+
+    try {
+      const randomSuffix = Math.random().toString(36).substring(2, 15);
+      const megaLinkWithSuffix = `${megaLink}?z=${randomSuffix}`;
+      const result = await invoke("download_and_extract_zip", {
+        downloadUrl: megaLinkWithSuffix,
+        extractPath: folderPath,
+        forceDownload: false,
+      });
+      console.log("Download result:", result);
+      setStatusMessage("Download complete!");
+    } catch (error) {
+      setStatusMessage(`Error downloading update: ${error}`);
+    } finally {
+      setIsDownloading(false);
     }
   }
 
@@ -112,86 +206,134 @@ function App() {
   }, []);
 
   return (
-    <main className="container">
-      <h1>Story Client Updater</h1>
-
-      <button onClick={runCheck}>Check PollyMC Instance</button>
-
-      {!instanceExists && (
-        <button onClick={createInstance}>Create PollyMC Instance</button>
-      )}
-
-      {instanceExists ? (
-        <p className="status-message success bg-red-500">
-          ✅ PollyMC instance found at: {folderPath}
-        </p>
-      ) : (
-        <p className="status-message error">
-          ❌ PollyMC instance not found at: {folderPath}. Please create it
-          first.
-        </p>
-      )}
-
-      <button
-        onClick={async () => {
-          if (!folderPath) {
-            setStatusMessage("⚠️ Please select a folder first");
-            return;
-          }
-
-          setIsDownloading(true);
-          setStatusMessage("Starting download...");
-          try {
-            // Don't append timestamp - it breaks caching logic
-            const updates = await invoke("download_and_extract_zip", {
-              downloadUrl: megaLink,
-              extractPath: folderPath,
-              forceDownload: false,
-            });
-            console.log("Updates available:", updates);
-            setStatusMessage(updates as string);
-          } catch (error) {
-            console.error("Download failed:", error);
-            setStatusMessage(`❌ Error: ${error}`);
-          } finally {
-            setIsDownloading(false);
-          }
-        }}
-        disabled={isDownloading || !folderPath}
+    <main className="overflow-hidden h-screen">
+      <div
+        id="titlebar"
+        className="flex items-center z-50 justify-between w-full bg-gray-800"
       >
-        {isDownloading ? "Downloading..." : "Download Updates"}
-      </button>
+        <h1 className="px-4 uppercase font-bold mt-0.5">Story</h1>
+        {/* Control buttons on the right side */}
+        <div className="flex z-50">
+          <TitlebarButton
+            icon="https://api.iconify.design/mdi:cog.svg"
+            alt="settings"
+            onClick={() => setIsSettingsOpen(true)}
+          />
+          <TitlebarButton
+            id="titlebar-close"
+            icon="https://api.iconify.design/mdi:close.svg"
+            alt="close"
+            onClick={() => appWindow.close()}
+          />
+        </div>
+      </div>
+      <div className="flex flex-col mt-8">
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+        />
 
-      {statusMessage && <p className="status-message">{statusMessage}</p>}
+        {/* Sidebar */}
+        <aside className="flex order-last items-center flex-col py-2 text-white">
+          <div className="">
+            {!instanceExists ? (
+              <Button onClick={createInstance} color="green">
+                Create Instance
+              </Button>
+            ) : (
+              <div className="space-y-2 flex flex-col items-center w-full">
+                <Button onClick={checkForUpdates} color="gray">
+                  Check for Updates
+                </Button>
+                <Button onClick={downloadUpdate} color="blue">
+                  Update
+                </Button>
+              </div>
+            )}
+          </div>
+        </aside>
+        {/* Add a main content area */}
+        <div className="flex-1 p-4">
+          {/* Image background */}
+          <img
+            src={Background}
+            alt="Background"
+            className="absolute inset-0 bg-gray-800 opacity-40 -z-50 object-cover w-full h-full pointer-events-none"
+          />
 
-      <div className="progress-container">
-        {isDownloading && (
-          <>
-            <p className="downloading-message">Downloading updates...</p>
+          {statusMessage ? <p className="mb-4">{statusMessage}</p> : null}
+          {/* Status info - uncomment if you need to display debug info 
+          <p>
+            Instance exists:{" "}
+            {instanceExists ? "Yes" : "No, please create an instance."}
+          </p>
+          <p>Instance folder: {instanceFolderName}</p>
+          <p>Instance path: {folderPath}</p>
+          <p>Base installed: {folderPath && baseInstalled ? "Yes" : "No"}</p>
+          */}
+          {/* Show progress bars when relevant */}
+          {isDownloading && !isExtracting && (
+            <div className="space-y-4">
+              {isDownloading && (
+                <div>
+                  <h3 className="font-bold">Download Progress</h3>
+                  <progress
+                    className="w-full"
+                    value={downloadProgress}
+                    max="100"
+                  ></progress>
+                  <p>
+                    {downloadProgress.toFixed(1)}% - {formatMB(downloadedBytes)}{" "}
+                    MB / {formatMB(totalBytes)} MB
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
-            <h3>Download Progress</h3>
-            <progress value={downloadProgress} max="100"></progress>
-            <p>
-              {downloadProgress.toFixed(0)}% - {formatMB(downloadedBytes)} MB /{" "}
-              {formatMB(totalBytes)} MB
-            </p>
-          </>
-        )}
-
-        {isExtracting && (
-          <>
-            <h3>Extraction Progress</h3>
-            <progress value={extractionProgress} max="100"></progress>
-            <p>
-              {extractionProgress.toFixed(0)}% - {extractedFiles} / {totalFiles}{" "}
-              files
-            </p>
-            <p>Current: {currentFile}</p>
-          </>
-        )}
+          {isExtracting && (
+            <div>
+              <h3 className="font-bold">Extraction Progress</h3>
+              <progress
+                className="w-full"
+                value={extractionProgress}
+                max="100"
+              ></progress>
+              <p>
+                {extractionProgress.toFixed(1)}% - {extractedFiles} /{" "}
+                {totalFiles} files
+              </p>
+              <p className="text-sm truncate">{currentFile}</p>
+            </div>
+          )}
+        </div>
       </div>
     </main>
   );
 }
 
+const Button = ({
+  children,
+  onClick,
+  color = "blue",
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  color?: "blue" | "green" | "gray";
+}) => {
+  return (
+    <button
+      className={`w-full ${
+        color === "blue"
+          ? "bg-blue-600 hover:bg-blue-700"
+          : color === "green"
+          ? "bg-green-600 hover:bg-green-700"
+          : "bg-gray-600 hover:bg-gray-700"
+      } text-white text-2xl font-bold py-2 px-4 hover:cursor-pointer transition-colors duration-200`}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+};
 export default App;

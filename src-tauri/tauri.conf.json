@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "story-launcher",
+        "title": "Story Client Updater",
         "width": 800,
-        "height": 600
+        "height": 425,
+        "decorations": false,
+        "resizable": false
       }
     ],
     "security": {
