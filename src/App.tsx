@@ -30,7 +30,6 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [instanceExists, setInstanceExists] = useState(false);
-  const [baseInstalled, setBaseInstalled] = useState(false);
 
   const { instanceFolderName } = useSettingsStore();
 
@@ -138,12 +137,6 @@ function App() {
     console.log("Instance check result:", result);
     setInstanceExists(result as boolean);
     setFolderPath(folderBase + instanceFolderName + "\\.minecraft");
-    if (result) {
-      const baseInstalled = await isBaseInstalled();
-      setBaseInstalled(baseInstalled);
-    } else {
-      setBaseInstalled(false);
-    }
   }
 
   async function createStoryInstance(folderBase: string) {
@@ -152,15 +145,6 @@ function App() {
       folderName: instanceFolderName,
     });
     console.log("Create instance result:", result);
-  }
-
-  async function isBaseInstalled(): Promise<boolean> {
-    console.log("Checking if base is installed at:", folderPath + "\\mods");
-    const result = await invoke("is_base_installed", {
-      instanceBase: folderPath + "\\mods\\",
-    });
-    console.log("Base installed check result:", result);
-    return result as boolean;
   }
 
   async function checkForUpdates() {
@@ -174,29 +158,6 @@ function App() {
       setStatusMessage(`Update status: ${updateInfo}`);
     } catch (error) {
       setStatusMessage(`Error checking for updates: ${error}`);
-    }
-  }
-
-  async function downloadUpdate() {
-    setIsDownloading(true);
-    setStatusMessage("Downloading update...");
-    setDownloadProgress(0);
-    setCurrentFile("");
-
-    try {
-      const randomSuffix = Math.random().toString(36).substring(2, 15);
-      const megaLinkWithSuffix = `${megaLink}?z=${randomSuffix}`;
-      const result = await invoke("download_and_extract_zip", {
-        downloadUrl: megaLinkWithSuffix,
-        extractPath: folderPath,
-        forceDownload: false,
-      });
-      console.log("Download result:", result);
-      setStatusMessage("Download complete!");
-    } catch (error) {
-      setStatusMessage(`Error downloading update: ${error}`);
-    } finally {
-      setIsDownloading(false);
     }
   }
 
