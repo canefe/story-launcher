@@ -10,9 +10,29 @@ body {
   user-select: none;           /* Non-prefixed version, currently not supported by any browser */
 }
 
+/* width */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+/* Track */
+::-webkit-scrollbar-track {
+  @apply bg-black/50
+}
+ 
+/* Handle */
+::-webkit-scrollbar-thumb {
+  background: #888; 
+}
+
+/* Handle on hover */
+::-webkit-scrollbar-thumb:hover {
+  background: #555; 
+}
+
 /* Titlebar styles */
 #titlebar {
-  height: 30px;
+  height: 34px;
   user-select: none;
   -webkit-user-select: none;
   -webkit-app-region: drag; /* This is important for Electron/Tauri apps */
@@ -58,5 +78,5 @@ body::-webkit-scrollbar {
 }
 
 p {
-  @apply bg-black/50 p-2 rounded-sm
+  @apply bg-black/50 p-2
 }

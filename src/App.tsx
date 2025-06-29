@@ -154,7 +154,7 @@ function App() {
         manifestUrl: manifestUrl,
         instanceBase: path,
       });
-      setStatusMessage(`Update status: ${updateInfo}`);
+      setStatusMessage(`${updateInfo}`);
     } catch (error) {
       setStatusMessage(`Error checking for updates: ${error}`);
     }
@@ -188,6 +188,12 @@ function App() {
   async function getPollyMCInstancePath(): Promise<string> {
     const home = await homeDir();
     console.log("Home directory:", home);
+    // get settings store
+    const instancesPath = useSettingsStore.getState().instancesPath;
+    if (instancesPath) {
+      return `${home}${instancesPath}`;
+    }
+    // Default path if not set in settings
     return `${home}\\AppData\\Roaming\\PollyMC\\instances\\`;
   }
 
@@ -208,12 +214,12 @@ function App() {
   }, []);
 
   return (
-    <main className="overflow-hidden h-screen">
+    <main className="overflow-hidden h-screen border-1 border-gray-500">
       <div
         id="titlebar"
         className="flex items-center z-50 justify-between w-full bg-gray-800"
       >
-        <h1 className="px-4 uppercase font-bold mt-0.5">Story</h1>
+        <h1 className="px-4 mt-0.5">Story</h1>
         {/* Control buttons on the right side */}
         <div className="flex z-50">
           <TitlebarButton
@@ -235,25 +241,6 @@ function App() {
           onClose={() => setIsSettingsOpen(false)}
         />
 
-        {/* Sidebar */}
-        <aside className="flex order-last items-center flex-col py-2 text-white">
-          <div className="">
-            {!instanceExists ? (
-              <Button onClick={createInstance} color="green">
-                Create Instance
-              </Button>
-            ) : (
-              <div className="space-y-2 flex flex-col items-center w-full">
-                <Button onClick={checkForUpdates} color="gray">
-                  Check for Updates
-                </Button>
-                <Button onClick={downloadFromManifest} color="blue">
-                  Update from Manifest
-                </Button>
-              </div>
-            )}
-          </div>
-        </aside>
         {/* Add a main content area */}
         <div className="flex-1 p-4">
           {/* Image background */}
@@ -263,7 +250,17 @@ function App() {
             className="absolute inset-0 bg-gray-800 opacity-40 -z-50 object-cover w-full h-full pointer-events-none"
           />
 
-          {statusMessage ? <p className="mb-4">{statusMessage}</p> : null}
+          {statusMessage ? (
+            <p className="mb-4 min-h-[200px] max-h-[200px] overflow-scroll overflow-x-hidden">
+              {/* List items by ','*/}
+              {statusMessage.split(",").map((item, index) => (
+                <li key={index}>
+                  {item.trim()}
+                  {index < statusMessage.split(",").length - 1 ? ", " : ""}
+                </li>
+              ))}
+            </p>
+          ) : null}
           {/* Status info - uncomment if you need to display debug info 
           <p>
             Instance exists:{" "}
@@ -321,6 +318,36 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Sidebar */}
+        {isDownloading || isExtracting ? (
+          <aside className="flex items-center flex-col py-2 text-white"></aside>
+        ) : (
+          <aside className="flex items-center flex-col py-2 text-white">
+            <div className="">
+              {!instanceExists ? (
+                <Button onClick={createInstance} color="green">
+                  Create Instance
+                </Button>
+              ) : (
+                <div className="gap-2 flex min-w-[550px] flex-col justify-center items-center w-full">
+                  <Button onClick={downloadFromManifest} color="blue">
+                    Update
+                  </Button>
+                  <Button onClick={checkForUpdates} color="gray" size="small">
+                    Check for Updates
+                  </Button>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+
+        <footer>
+          <div className="flex justify-center items-center text-white py-2">
+            <p className="text-sm">story-launcher 0.1.0 - canefe</p>
+          </div>
+        </footer>
       </div>
     </main>
   );
@@ -330,20 +357,28 @@ const Button = ({
   children,
   onClick,
   color = "blue",
+  className = "",
+  size = "large",
 }: {
   children: React.ReactNode;
   onClick: () => void;
   color?: "blue" | "green" | "gray";
+  className?: string;
+  size?: "small" | "large";
 }) => {
   return (
     <button
       className={`w-full ${
+        size === "small" ? "max-w-[150px]" : "max-w-[300px]"
+      }  ${
         color === "blue"
           ? "bg-blue-600 hover:bg-blue-700"
           : color === "green"
           ? "bg-green-600 hover:bg-green-700"
           : "bg-gray-600 hover:bg-gray-700"
-      } text-white text-2xl font-bold py-2 px-4 hover:cursor-pointer transition-colors duration-200`}
+      } text-white ${size === "small" ? "text-sm" : "text-xl"} font-bold ${
+        size === "small" ? "py-1 px-2 h-8" : "py-2 px-4 h-12"
+      } hover:cursor-pointer transition-colors duration-200 ${className}`}
       onClick={onClick}
     >
       {children}
