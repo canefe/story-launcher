@@ -1918,6 +1918,7 @@ async fn download_single_mod_file(
     
     println!("Downloading jar file: {} ({} bytes)", jar_file.filename, jar_file.size);
     
+    /*
     // Emit progress update to frontend
     let _ = window.emit(
         "download_progress",
@@ -1929,7 +1930,7 @@ async fn download_single_mod_file(
             "stage": "dependencies"
         }),
     );
-    
+    */
     // Download the jar file
     let jar_response = client
         .get(&jar_file.url)
