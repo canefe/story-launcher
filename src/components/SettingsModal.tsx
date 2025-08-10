@@ -62,7 +62,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               id="instancesPath"
               type="text"
               className="w-full p-2 bg-gray-700"
-              value={instancesPath}
+              value={instancesPathValue}
               onChange={(e) => setInstancesPath(e.target.value)}
               placeholder="Instances path"
             />
