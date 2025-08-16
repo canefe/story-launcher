@@ -1,15 +1,15 @@
+use chrono;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
+use std::future::Future;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::future::Future;
 use tauri::Emitter;
 use tauri::{Manager, Window};
 use zip::ZipArchive;
-use chrono;
 // Add new structs for Modrinth API and manifest handling
 #[derive(Serialize, Deserialize)]
 struct ModrinthVersionResponse {
@@ -163,9 +163,9 @@ fn create_story_instance(instance_base: String, folder_name: String) -> Result<S
     std::fs::create_dir_all(&story_path).map_err(|e| e.to_string())?;
     println!("Created instance at: {:?}", story_path);
     println!("Finalizing instance at {}", instance_base);
-    
+
     // Use path joining for cross-platform compatibility
-    let full_path = format!("{}\\{}", instance_base, folder_name);
+    let full_path = story_path.to_string_lossy().to_string();
     match finalize_instance(full_path) {
         Ok(_) => println!("Instance finalized successfully"),
         Err(e) => {
@@ -177,18 +177,29 @@ fn create_story_instance(instance_base: String, folder_name: String) -> Result<S
 }
 
 // Add this function to verify extraction integrity based on manifest requirements
-fn verify_extraction_integrity(extract_path: &Path, manifest_data: &Option<LegacyManifestFile>) -> Result<bool, String> {
+fn verify_extraction_integrity(
+    extract_path: &Path,
+    manifest_data: &Option<LegacyManifestFile>,
+) -> Result<bool, String> {
     println!("Verifying extraction integrity");
-    
+
     // Check if we have manifest requirements to verify
     if let Some(manifest) = manifest_data {
         if let Some(required_files) = &manifest.required_files {
-            println!("Checking {} required files from manifest", required_files.len());
-            
+            println!(
+                "Checking {} required files from manifest",
+                required_files.len()
+            );
+
             for (index, relative_path) in required_files.iter().enumerate() {
                 let full_path = extract_path.join(relative_path);
-                println!("Checking required file {}/{}: {}", index + 1, required_files.len(), full_path.display());
-                
+                println!(
+                    "Checking required file {}/{}: {}",
+                    index + 1,
+                    required_files.len(),
+                    full_path.display()
+                );
+
                 if !full_path.exists() {
                     println!("Missing required file: {}", full_path.display());
                     return Ok(false);
@@ -201,7 +212,7 @@ fn verify_extraction_integrity(extract_path: &Path, manifest_data: &Option<Legac
     } else {
         println!("No manifest data available for verification");
     }
-    
+
     // If we get here, all required files are present (or none were specified)
     Ok(true)
 }
@@ -488,7 +499,7 @@ async fn download_and_extract_zip(
 
         // Create a hash file at the extract location to track what version is installed
         let extract_hash_path = extract_path.join(".installed_hash");
-        println!("Hash marker path: {}", extract_hash_path.display());        // Initialize manifest_data earlier in the code flow
+        println!("Hash marker path: {}", extract_hash_path.display()); // Initialize manifest_data earlier in the code flow
         let mut manifest_data: Option<LegacyManifestFile> = None;
 
         // Try to find and parse the manifest file from the zip before extraction
@@ -584,9 +595,9 @@ async fn download_and_extract_zip(
             };
 
             let total_files = zip.len();
-            println!("Zip archive contains {} files", total_files);            // Check for manifest.json again, but no need to re-initialize
+            println!("Zip archive contains {} files", total_files); // Check for manifest.json again, but no need to re-initialize
             println!("Looking for manifest.json in zip");
-            
+
             // Only re-read manifest if we couldn't read it earlier
             if manifest_data.is_none() {
                 // Try to find and parse the manifest file
@@ -926,57 +937,61 @@ async fn download_from_manifest(
     println!("=== DOWNLOAD_FROM_MANIFEST START ===");
     println!("Manifest URL: {}", manifest_url);
     println!("Instance base path: {}", instance_base);
-    
+
     // Validate instance_base path exists
     let instance_base_path = Path::new(&instance_base);
-    println!("Checking if instance_base exists: {}", instance_base_path.display());
+    println!(
+        "Checking if instance_base exists: {}",
+        instance_base_path.display()
+    );
     if !instance_base_path.exists() {
-        let error_msg = format!("Instance base path does not exist: {}", instance_base_path.display());
+        let error_msg = format!(
+            "Instance base path does not exist: {}",
+            instance_base_path.display()
+        );
         println!("ERROR: {}", error_msg);
         return Err(error_msg);
     }
-    
+
     // Download and parse the manifest
     println!("Downloading manifest from: {}", manifest_url);
     let client = reqwest::Client::new();
-    let manifest_response = client
-        .get(&manifest_url)
-        .send()
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to download manifest: {}", e);
-            println!("ERROR: {}", error_msg);
-            error_msg
-        })?;
-    
+    let manifest_response = client.get(&manifest_url).send().await.map_err(|e| {
+        let error_msg = format!("Failed to download manifest: {}", e);
+        println!("ERROR: {}", error_msg);
+        error_msg
+    })?;
+
     println!("Successfully downloaded manifest, reading content...");
-    let manifest_text = manifest_response
-        .text()
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to read manifest text: {}", e);
-            println!("ERROR: {}", error_msg);
-            error_msg
-        })?;
-    
-    println!("Manifest content length: {} characters", manifest_text.len());
+    let manifest_text = manifest_response.text().await.map_err(|e| {
+        let error_msg = format!("Failed to read manifest text: {}", e);
+        println!("ERROR: {}", error_msg);
+        error_msg
+    })?;
+
+    println!(
+        "Manifest content length: {} characters",
+        manifest_text.len()
+    );
     println!("Parsing manifest JSON...");
-    let manifest: StoryManifest = serde_json::from_str(&manifest_text)
-        .map_err(|e| {
-            let error_msg = format!("Failed to parse manifest JSON: {}", e);
-            println!("ERROR: {}", error_msg);
-            error_msg
-        })?;
-    
-    println!("Successfully parsed manifest for instance: {} v{}", manifest.instance.name, manifest.instance.version);
-    
+    let manifest: StoryManifest = serde_json::from_str(&manifest_text).map_err(|e| {
+        let error_msg = format!("Failed to parse manifest JSON: {}", e);
+        println!("ERROR: {}", error_msg);
+        error_msg
+    })?;
+
+    println!(
+        "Successfully parsed manifest for instance: {} v{}",
+        manifest.instance.name, manifest.instance.version
+    );
+
     // Step 1: Download the modpack
     println!("=== STEP 1: DOWNLOADING MODPACK ===");
     println!("Calling download_modrinth_modpack with:");
     println!("  - project_name: {}", manifest.instance.name);
     println!("  - version: {}", manifest.instance.version);
     println!("  - instance_base: {}", instance_base);
-    
+
     // Emit initial progress for modpack download
     let _ = window.emit(
         "download_progress",
@@ -988,23 +1003,25 @@ async fn download_from_manifest(
             "stage": "modpack"
         }),
     );
-    
+
     let modpack_result = download_modrinth_modpack(
         window.clone(),
         manifest.instance.name.clone(),
         manifest.instance.version.clone(),
         instance_base.clone(),
-    ).await.map_err(|e| {
+    )
+    .await
+    .map_err(|e| {
         let error_msg = format!("Modpack download failed: {}", e);
         println!("ERROR: {}", error_msg);
         error_msg
     })?;
-    
+
     println!("Modpack download result: {}", modpack_result);
-    
+
     // Wait a moment for file operations to complete
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-    
+
     // Emit completion for modpack
     let _ = window.emit(
         "download_progress",
@@ -1016,12 +1033,15 @@ async fn download_from_manifest(
             "stage": "modpack"
         }),
     );
-    
+
     // Step 2: Download extra mods if any
     let mut skipped_count = 0;
     if let Some(extra_mods) = &manifest.extra_mods {
-        println!("=== STEP 2: DOWNLOADING {} EXTRA MODS ===", extra_mods.len());
-        
+        println!(
+            "=== STEP 2: DOWNLOADING {} EXTRA MODS ===",
+            extra_mods.len()
+        );
+
         // Emit initial progress for extra mods
         let _ = window.emit(
             "download_progress",
@@ -1033,64 +1053,78 @@ async fn download_from_manifest(
                 "stage": "extra_mods"
             }),
         );
-        
+
         let story_path = Path::new(&instance_base).join("Story");
         println!("Story path: {}", story_path.display());
-        
+
         // Check if Story directory exists
         if !story_path.exists() {
             let error_msg = format!("Story directory does not exist: {}", story_path.display());
             println!("ERROR: {}", error_msg);
             return Err(error_msg);
         }
-        
+
         let mods_dir = story_path.join(".minecraft").join("mods");
         println!("Mods directory path: {}", mods_dir.display());
-        
+
         // Check if mods directory exists, create if it doesn't
         if !mods_dir.exists() {
             println!("Mods directory doesn't exist, creating it...");
             std::fs::create_dir_all(&mods_dir).map_err(|e| {
-                let error_msg = format!("Failed to create mods directory {}: {}", mods_dir.display(), e);
+                let error_msg = format!(
+                    "Failed to create mods directory {}: {}",
+                    mods_dir.display(),
+                    e
+                );
                 println!("ERROR: {}", error_msg);
                 error_msg
             })?;
             println!("Successfully created mods directory");
         }
-        
+
         // Get list of existing mods to avoid duplicates
         println!("Checking for existing mods to avoid duplicates...");
-        
+
         for (index, extra_mod) in extra_mods.iter().enumerate() {
-            let version_display = extra_mod.version.as_ref().map(|v| v.as_str()).unwrap_or("auto-detect");
-            
+            let version_display = extra_mod
+                .version
+                .as_ref()
+                .map(|v| v.as_str())
+                .unwrap_or("auto-detect");
+
             // Re-scan mods directory for each mod to catch any that were just extracted
             let existing_mods = get_existing_mod_names(&mods_dir).unwrap_or_else(|e| {
                 println!("Warning: Failed to scan existing mods: {}", e);
                 HashSet::new()
             });
-            
+
             // Check if this mod already exists
             let normalized_mod_name = normalize_mod_name(&extra_mod.name);
-            println!("Checking if mod '{}' (normalized: '{}') exists in: {:?}", 
-                    extra_mod.name, normalized_mod_name, existing_mods);
-            
+            println!(
+                "Checking if mod '{}' (normalized: '{}') exists in: {:?}",
+                extra_mod.name, normalized_mod_name, existing_mods
+            );
+
             // Check for exact match or intelligent partial matching
-            let mod_exists = existing_mods.contains(&normalized_mod_name) || 
-                            existing_mods.iter().any(|existing| {
-                                // Allow partial matching only if the manifest mod name is a significant part
-                                // of the existing mod name (not the other way around to avoid false positives)
-                                // Also require the manifest name to be at least 4 characters to avoid matching
-                                // very short names like "emi"
-                                normalized_mod_name.len() >= 4 && 
-                                existing.contains(&normalized_mod_name)
-                            });
-            
+            let mod_exists = existing_mods.contains(&normalized_mod_name)
+                || existing_mods.iter().any(|existing| {
+                    // Allow partial matching only if the manifest mod name is a significant part
+                    // of the existing mod name (not the other way around to avoid false positives)
+                    // Also require the manifest name to be at least 4 characters to avoid matching
+                    // very short names like "emi"
+                    normalized_mod_name.len() >= 4 && existing.contains(&normalized_mod_name)
+                });
+
             if mod_exists {
-                println!("Skipping extra mod {}/{}: {} v{} (already exists)", 
-                        index + 1, extra_mods.len(), extra_mod.name, version_display);
+                println!(
+                    "Skipping extra mod {}/{}: {} v{} (already exists)",
+                    index + 1,
+                    extra_mods.len(),
+                    extra_mod.name,
+                    version_display
+                );
                 skipped_count += 1;
-                
+
                 // Emit progress for skipped mod
                 let _ = window.emit(
                     "download_progress",
@@ -1104,12 +1138,21 @@ async fn download_from_manifest(
                 );
                 continue;
             }
-            
-            println!("Downloading extra mod {}/{}: {} v{}", 
-                    index + 1, extra_mods.len(), extra_mod.name, version_display);
-            
+
+            println!(
+                "Downloading extra mod {}/{}: {} v{}",
+                index + 1,
+                extra_mods.len(),
+                extra_mod.name,
+                version_display
+            );
+
             // Emit progress for this extra mod
-            let version_text = extra_mod.version.as_ref().map(|v| format!(" v{}", v)).unwrap_or_else(|| " (auto-detect)".to_string());
+            let version_text = extra_mod
+                .version
+                .as_ref()
+                .map(|v| format!(" v{}", v))
+                .unwrap_or_else(|| " (auto-detect)".to_string());
             let _ = window.emit(
                 "download_progress",
                 serde_json::json!({
@@ -1120,18 +1163,22 @@ async fn download_from_manifest(
                     "stage": "extra_mods"
                 }),
             );
-            
+
             // Get minecraft version and loader from manifest
-            let minecraft_version = manifest.instance.minecraft_version
+            let minecraft_version = manifest
+                .instance
+                .minecraft_version
                 .as_ref()
                 .unwrap_or(&"1.21.1".to_string())
                 .clone();
-            
-            let loader = manifest.instance.loader
+
+            let loader = manifest
+                .instance
+                .loader
                 .as_ref()
                 .unwrap_or(&"fabric".to_string())
                 .clone();
-            
+
             let mod_result = download_modrinth_mod(
                 window.clone(),
                 extra_mod.name.clone(),
@@ -1139,8 +1186,9 @@ async fn download_from_manifest(
                 minecraft_version,
                 loader,
                 mods_dir.to_string_lossy().to_string(),
-            ).await;
-            
+            )
+            .await;
+
             match mod_result {
                 Ok(result) => println!("Extra mod downloaded: {}", result),
                 Err(e) => {
@@ -1152,25 +1200,37 @@ async fn download_from_manifest(
     } else {
         println!("=== STEP 2: NO EXTRA MODS TO DOWNLOAD ===");
     }
-    
+
     // Step 3: Download and extract override files if any
     if let Some(overrides) = &manifest.overrides {
-        println!("=== STEP 3: DOWNLOADING {} OVERRIDE FILES ===", overrides.len());
-        
+        println!(
+            "=== STEP 3: DOWNLOADING {} OVERRIDE FILES ===",
+            overrides.len()
+        );
+
         let story_path = Path::new(&instance_base).join("Story");
         let minecraft_dir = story_path.join(".minecraft");
-        
+
         // Ensure .minecraft directory exists
         std::fs::create_dir_all(&minecraft_dir).map_err(|e| {
-            let error_msg = format!("Failed to create .minecraft directory {}: {}", minecraft_dir.display(), e);
+            let error_msg = format!(
+                "Failed to create .minecraft directory {}: {}",
+                minecraft_dir.display(),
+                e
+            );
             println!("ERROR: {}", error_msg);
             error_msg
         })?;
-        
+
         for (index, override_item) in overrides.iter().enumerate() {
-            println!("Downloading override {}/{}: {} from {}", 
-                    index + 1, overrides.len(), override_item.name, override_item.url);
-            
+            println!(
+                "Downloading override {}/{}: {} from {}",
+                index + 1,
+                overrides.len(),
+                override_item.name,
+                override_item.url
+            );
+
             // Emit progress for this override
             let _ = window.emit(
                 "download_progress",
@@ -1182,24 +1242,28 @@ async fn download_from_manifest(
                     "stage": "overrides"
                 }),
             );
-            
+
             // Use the existing download_and_extract_zip function
             let extract_result = download_and_extract_zip(
                 window.clone(),
                 override_item.url.clone(),
                 minecraft_dir.to_string_lossy().to_string(),
                 false, // Don't force download unless needed
-            ).await;
-            
+            )
+            .await;
+
             match extract_result {
                 Ok(result) => println!("Override extracted: {}", result),
                 Err(e) => {
-                    println!("Warning: Failed to download override {}: {}", override_item.name, e);
+                    println!(
+                        "Warning: Failed to download override {}: {}",
+                        override_item.name, e
+                    );
                     // Continue with other overrides instead of failing completely
                 }
             }
         }
-        
+
         // Emit completion for overrides
         let _ = window.emit(
             "download_progress",
@@ -1214,21 +1278,24 @@ async fn download_from_manifest(
     } else {
         println!("=== STEP 3: NO OVERRIDE FILES TO DOWNLOAD ===");
     }
-    
+
     // Step 4: Save version tracking information
     println!("=== STEP 4: SAVING VERSION TRACKING ===");
     let story_path = Path::new(&instance_base).join("Story");
     println!("Story path for version tracking: {}", story_path.display());
-    
+
     if !story_path.exists() {
-        let error_msg = format!("Story directory does not exist for version tracking: {}", story_path.display());
+        let error_msg = format!(
+            "Story directory does not exist for version tracking: {}",
+            story_path.display()
+        );
         println!("ERROR: {}", error_msg);
         return Err(error_msg);
     }
-    
+
     let version_file = story_path.join(".current_version.json");
     println!("Version file path: {}", version_file.display());
-    
+
     let version_info = serde_json::json!({
         "instance_name": manifest.instance.name,
         "instance_version": manifest.instance.version,
@@ -1250,17 +1317,27 @@ async fn download_from_manifest(
         }).unwrap_or_default(),
         "last_updated": chrono::Utc::now().to_rfc3339()
     });
-    
+
     println!("Writing version info to file...");
-    std::fs::write(&version_file, serde_json::to_string_pretty(&version_info).unwrap())
-        .map_err(|e| {
-            let error_msg = format!("Failed to save version info to {}: {}", version_file.display(), e);
-            println!("ERROR: {}", error_msg);
-            error_msg
-        })?;
-    
-    println!("Successfully saved version tracking information to: {}", version_file.display());
-    
+    std::fs::write(
+        &version_file,
+        serde_json::to_string_pretty(&version_info).unwrap(),
+    )
+    .map_err(|e| {
+        let error_msg = format!(
+            "Failed to save version info to {}: {}",
+            version_file.display(),
+            e
+        );
+        println!("ERROR: {}", error_msg);
+        error_msg
+    })?;
+
+    println!(
+        "Successfully saved version tracking information to: {}",
+        version_file.display()
+    );
+
     // Emit final completion event
     let _ = window.emit(
         "download_progress",
@@ -1272,30 +1349,35 @@ async fn download_from_manifest(
             "stage": "complete"
         }),
     );
-    
+
     let total_extra_mods = manifest.extra_mods.as_ref().map_or(0, |m| m.len());
     let total_overrides = manifest.overrides.as_ref().map_or(0, |o| o.len());
     let downloaded_mods = total_extra_mods - skipped_count;
-    
+
     let final_result = if total_overrides > 0 {
         if skipped_count > 0 {
             format!("✅ Successfully downloaded modpack, {} extra mods ({} downloaded, {} skipped), and {} override files", 
                     total_extra_mods, downloaded_mods, skipped_count, total_overrides)
         } else {
-            format!("✅ Successfully downloaded modpack, {} extra mods, and {} override files", 
-                    total_extra_mods, total_overrides)
+            format!(
+                "✅ Successfully downloaded modpack, {} extra mods, and {} override files",
+                total_extra_mods, total_overrides
+            )
         }
     } else {
         if skipped_count > 0 {
             format!("✅ Successfully downloaded modpack and {} extra mods ({} downloaded, {} skipped as already present)", 
                     total_extra_mods, downloaded_mods, skipped_count)
         } else {
-            format!("✅ Successfully downloaded modpack and {} extra mods", total_extra_mods)
+            format!(
+                "✅ Successfully downloaded modpack and {} extra mods",
+                total_extra_mods
+            )
         }
     };
     println!("=== DOWNLOAD_FROM_MANIFEST COMPLETE ===");
     println!("Final result: {}", final_result);
-    
+
     Ok(final_result)
 }
 
@@ -1306,12 +1388,18 @@ async fn download_modrinth_modpack(
     version: String,
     instance_base: String,
 ) -> Result<String, String> {
-    println!("Downloading Modrinth modpack: {} v{}", project_name, version);
-    
+    println!(
+        "Downloading Modrinth modpack: {} v{}",
+        project_name, version
+    );
+
     // Construct the Modrinth API URL
-    let api_url = format!("https://api.modrinth.com/v2/project/{}/version/{}", project_name, version);
+    let api_url = format!(
+        "https://api.modrinth.com/v2/project/{}/version/{}",
+        project_name, version
+    );
     println!("API URL: {}", api_url);
-    
+
     // Get version info from Modrinth API
     let client = reqwest::Client::new();
     let response = client
@@ -1319,44 +1407,55 @@ async fn download_modrinth_modpack(
         .send()
         .await
         .map_err(|e| format!("Failed to fetch modpack info: {}", e))?;
-    
+
     let version_info: ModrinthVersionResponse = response
         .json()
         .await
         .map_err(|e| format!("Failed to parse modpack info: {}", e))?;
-    
+
     println!("Found modpack: {}", version_info.name);
-    
+
     // Find the primary .mrpack file
-    let mrpack_file = version_info.files
+    let mrpack_file = version_info
+        .files
         .iter()
         .find(|f| f.primary && f.filename.ends_with(".mrpack"))
         .ok_or("No primary .mrpack file found")?;
-    
-    println!("Found mrpack file: {} ({} bytes)", mrpack_file.filename, mrpack_file.size);
-    
+
+    println!(
+        "Found mrpack file: {} ({} bytes)",
+        mrpack_file.filename, mrpack_file.size
+    );
+
     // Create the Story instance directory
     let story_path = Path::new(&instance_base).join("Story");
     println!("=== MODPACK: CREATING DIRECTORIES ===");
     println!("Instance base: {}", instance_base);
     println!("Story path to create: {}", story_path.display());
-    
+
     // Check if instance_base exists and is accessible
     let instance_base_path = Path::new(&instance_base);
     if !instance_base_path.exists() {
-        let error_msg = format!("Instance base directory does not exist: {}", instance_base_path.display());
+        let error_msg = format!(
+            "Instance base directory does not exist: {}",
+            instance_base_path.display()
+        );
         println!("ERROR: {}", error_msg);
         return Err(error_msg);
     }
-    
+
     println!("Instance base exists, creating Story directory...");
     std::fs::create_dir_all(&story_path).map_err(|e| {
-        let error_msg = format!("Failed to create Story directory {}: {}", story_path.display(), e);
+        let error_msg = format!(
+            "Failed to create Story directory {}: {}",
+            story_path.display(),
+            e
+        );
         println!("ERROR: {}", error_msg);
         error_msg
     })?;
     println!("Successfully created Story directory");
-    
+
     // Download the mrpack file
     println!("Downloading mrpack file from: {}", mrpack_file.url);
     let mrpack_response = client
@@ -1364,85 +1463,106 @@ async fn download_modrinth_modpack(
         .send()
         .await
         .map_err(|e| format!("Failed to download mrpack: {}", e))?;
-    
+
     let mrpack_bytes = mrpack_response
         .bytes()
         .await
         .map_err(|e| format!("Failed to read mrpack bytes: {}", e))?;
-    
+
     // Extract the mrpack (it's a zip file)
     let cursor = Cursor::new(&mrpack_bytes);
-    let mut zip = ZipArchive::new(cursor)
-        .map_err(|e| format!("Failed to open mrpack as zip: {}", e))?;
-    
+    let mut zip =
+        ZipArchive::new(cursor).map_err(|e| format!("Failed to open mrpack as zip: {}", e))?;
+
     println!("Extracting mrpack with {} files", zip.len());
-    
+
     // Create necessary directories
     let mrpack_dir = story_path.join("mrpack");
     let minecraft_dir = story_path.join(".minecraft");
     println!("Creating mrpack directory at: {}", mrpack_dir.display());
     std::fs::create_dir_all(&mrpack_dir).map_err(|e| {
-        let error_msg = format!("Failed to create mrpack directory {}: {}", mrpack_dir.display(), e);
+        let error_msg = format!(
+            "Failed to create mrpack directory {}: {}",
+            mrpack_dir.display(),
+            e
+        );
         println!("{}", error_msg);
         error_msg
     })?;
-    println!("Creating minecraft directory at: {}", minecraft_dir.display());
+    println!(
+        "Creating minecraft directory at: {}",
+        minecraft_dir.display()
+    );
     std::fs::create_dir_all(&minecraft_dir).map_err(|e| {
-        let error_msg = format!("Failed to create minecraft directory {}: {}", minecraft_dir.display(), e);
+        let error_msg = format!(
+            "Failed to create minecraft directory {}: {}",
+            minecraft_dir.display(),
+            e
+        );
         println!("{}", error_msg);
         error_msg
     })?;
-    
+
     let mut modrinth_index_content = String::new();
-    
+
     // Extract files from mrpack
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).map_err(|e| e.to_string())?;
         let file_name = file.name();
-        
+
         println!("Extracting: {}", file_name);
-        
+
         if file_name == "modrinth.index.json" {
             // Save modrinth.index.json to mrpack folder
-            file.read_to_string(&mut modrinth_index_content).map_err(|e| e.to_string())?;
+            file.read_to_string(&mut modrinth_index_content)
+                .map_err(|e| e.to_string())?;
             let index_path = mrpack_dir.join("modrinth.index.json");
             std::fs::write(index_path, &modrinth_index_content).map_err(|e| e.to_string())?;
         } else if file_name.starts_with("overrides/") {
             // Extract overrides to .minecraft folder
             let relative_path = file_name.strip_prefix("overrides/").unwrap_or(file_name);
             let output_path = minecraft_dir.join(relative_path);
-            
+
             if file.is_dir() {
                 std::fs::create_dir_all(&output_path).map_err(|e| e.to_string())?;
             } else {
                 if let Some(parent) = output_path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
-                
+
                 let mut output_file = File::create(&output_path).map_err(|e| e.to_string())?;
                 std::io::copy(&mut file, &mut output_file).map_err(|e| e.to_string())?;
             }
         }
     }
-    
+
     // Parse modrinth.index.json and download mods
     if !modrinth_index_content.is_empty() {
         let modrinth_index: ModrinthIndex = serde_json::from_str(&modrinth_index_content)
             .map_err(|e| format!("Failed to parse modrinth.index.json: {}", e))?;
-        
+
         let mods_dir = minecraft_dir;
         println!("Creating mods directory at: {}", mods_dir.display());
         std::fs::create_dir_all(&mods_dir).map_err(|e| {
-            let error_msg = format!("Failed to create mods directory {}: {}", mods_dir.display(), e);
+            let error_msg = format!(
+                "Failed to create mods directory {}: {}",
+                mods_dir.display(),
+                e
+            );
             println!("{}", error_msg);
             error_msg
         })?;
-        
+
         println!("Downloading {} mod files", modrinth_index.files.len());
-        
+
         for (index, mod_file) in modrinth_index.files.iter().enumerate() {
-            println!("Downloading mod {}/{}: {}", index + 1, modrinth_index.files.len(), mod_file.path);
-            
+            println!(
+                "Downloading mod {}/{}: {}",
+                index + 1,
+                modrinth_index.files.len(),
+                mod_file.path
+            );
+
             // Emit progress update to frontend
             let _ = window.emit(
                 "download_progress",
@@ -1454,7 +1574,7 @@ async fn download_modrinth_modpack(
                     "stage": "mods"
                 }),
             );
-            
+
             // Try each download URL until one works
             let mut downloaded = false;
             for url in &mod_file.downloads {
@@ -1462,20 +1582,25 @@ async fn download_modrinth_modpack(
                     Ok(response) => {
                         let mod_bytes = response.bytes().await.map_err(|e| e.to_string())?;
                         let mod_path = mods_dir.join(&mod_file.path);
-                        
+
                         // Ensure parent directory exists before writing the file
                         if let Some(parent) = mod_path.parent() {
                             println!("Ensuring parent directory exists: {}", parent.display());
                             std::fs::create_dir_all(parent).map_err(|e| {
-                                let error_msg = format!("Failed to create parent directory {}: {}", parent.display(), e);
+                                let error_msg = format!(
+                                    "Failed to create parent directory {}: {}",
+                                    parent.display(),
+                                    e
+                                );
                                 println!("ERROR: {}", error_msg);
                                 error_msg
                             })?;
                         }
-                        
+
                         println!("Writing mod file to: {}", mod_path.display());
                         std::fs::write(&mod_path, &mod_bytes).map_err(|e| {
-                            let error_msg = format!("Failed to write mod file {}: {}", mod_path.display(), e);
+                            let error_msg =
+                                format!("Failed to write mod file {}: {}", mod_path.display(), e);
                             println!("ERROR: {}", error_msg);
                             error_msg
                         })?;
@@ -1488,12 +1613,12 @@ async fn download_modrinth_modpack(
                     }
                 }
             }
-            
+
             if !downloaded {
                 println!("Warning: Failed to download mod: {}", mod_file.path);
             }
         }
-        
+
         // Final progress update for mods download
         let _ = window.emit(
             "download_progress",
@@ -1506,11 +1631,14 @@ async fn download_modrinth_modpack(
             }),
         );
     }
-    
+
     // Create instance configuration files
     create_instance_config(&story_path, &version_info)?;
-    
-    Ok(format!("✅ Successfully downloaded and extracted modpack: {} v{}", project_name, version))
+
+    Ok(format!(
+        "✅ Successfully downloaded and extracted modpack: {} v{}",
+        project_name, version
+    ))
 }
 
 #[tauri::command]
@@ -1524,45 +1652,51 @@ async fn download_modrinth_mod(
 ) -> Result<String, String> {
     let client = reqwest::Client::new();
     let mut downloaded_mods = std::collections::HashSet::new();
-    
+
     let version_info = if let Some(version) = version {
         println!("Downloading mod: {} v{}", mod_name, version);
-        
+
         // Construct the Modrinth API URL for the specific version
-        let api_url = format!("https://api.modrinth.com/v2/project/{}/version/{}", mod_name, version);
+        let api_url = format!(
+            "https://api.modrinth.com/v2/project/{}/version/{}",
+            mod_name, version
+        );
         println!("Mod API URL: {}", api_url);
-        
+
         // Get version info from Modrinth API
         let response = client
             .get(&api_url)
             .send()
             .await
             .map_err(|e| format!("Failed to fetch mod info: {}", e))?;
-        
+
         response
             .json()
             .await
             .map_err(|e| format!("Failed to parse mod info: {}", e))?
     } else {
-        println!("Finding best version for mod: {} with Minecraft {} and loader {}", mod_name, minecraft_version, loader);
-        
+        println!(
+            "Finding best version for mod: {} with Minecraft {} and loader {}",
+            mod_name, minecraft_version, loader
+        );
+
         // Find the best version for this Minecraft version and loader
         find_best_mod_version(&client, &mod_name, &minecraft_version, &loader).await?
     };
-    
+
     println!("Found mod: {}", version_info.name);
-    
+
     // Mark this mod as downloaded to prevent cycles
     downloaded_mods.insert(version_info.project_id.clone());
-    
+
     // Download the main mod file
     let main_result = download_single_mod_file(&window, &client, &version_info, &mods_dir).await?;
-    
+
     // Download dependencies
     println!("Checking dependencies for mod: {}", mod_name);
     if !version_info.dependencies.is_empty() {
         println!("Found {} dependencies", version_info.dependencies.len());
-        
+
         if let Err(e) = download_mod_dependencies(
             window.clone(),
             client.clone(),
@@ -1571,13 +1705,15 @@ async fn download_modrinth_mod(
             loader.clone(),
             mods_dir.clone(),
             downloaded_mods.clone(),
-        ).await {
+        )
+        .await
+        {
             println!("Warning: Failed to download some dependencies: {}", e);
         }
     } else {
         println!("No dependencies found for mod: {}", mod_name);
     }
-    
+
     // Emit completion progress
     let _ = window.emit(
         "download_progress",
@@ -1589,15 +1725,22 @@ async fn download_modrinth_mod(
             "stage": "extra_mods"
         }),
     );
-    
-    Ok(format!("✅ Downloaded mod: {} with dependencies", main_result))
+
+    Ok(format!(
+        "✅ Downloaded mod: {} with dependencies",
+        main_result
+    ))
 }
 
-fn create_instance_config(story_path: &Path, version_info: &ModrinthVersionResponse) -> Result<(), String> {
+fn create_instance_config(
+    story_path: &Path,
+    version_info: &ModrinthVersionResponse,
+) -> Result<(), String> {
     println!("Creating instance configuration files");
-    
+
     // Create instance.cfg
-    let instance_cfg = format!(r#"[General]
+    let instance_cfg = format!(
+        r#"[General]
 ConfigVersion=1.2
 ManagedPack=true
 iconKey=modrinth_{0}
@@ -1608,26 +1751,28 @@ ManagedPackVersionID={3}
 ManagedPackVersionName={4}
 name=Story
 InstanceType=OneSix
-"#, 
+"#,
         version_info.project_id,
         version_info.project_id,
         version_info.name,
         version_info.id,
         version_info.version_number
     );
-    
+
     std::fs::write(story_path.join("instance.cfg"), instance_cfg)
         .map_err(|e| format!("Failed to write instance.cfg: {}", e))?;
-    
+
     // Determine Minecraft version and loader from the version info
-    let minecraft_version = version_info.game_versions.first()
+    let minecraft_version = version_info
+        .game_versions
+        .first()
         .ok_or("No game version found")?;
-    let loader = version_info.loaders.first()
-        .ok_or("No loader found")?;
-    
+    let loader = version_info.loaders.first().ok_or("No loader found")?;
+
     // Create mmc-pack.json
     let mmc_pack_json = if loader == "fabric" {
-        format!(r#"{{
+        format!(
+            r#"{{
     "components": [
         {{
             "cachedName": "Minecraft",
@@ -1650,10 +1795,13 @@ InstanceType=OneSix
         }}
     ],
     "formatVersion": 1
-}}"#, minecraft_version)
+}}"#,
+            minecraft_version
+        )
     } else {
         // Default/NeoForge configuration
-        format!(r#"{{
+        format!(
+            r#"{{
     "components": [
         {{
             "cachedName": "Minecraft",
@@ -1664,12 +1812,14 @@ InstanceType=OneSix
         }}
     ],
     "formatVersion": 1
-}}"#, minecraft_version)
+}}"#,
+            minecraft_version
+        )
     };
-    
+
     std::fs::write(story_path.join("mmc-pack.json"), mmc_pack_json)
         .map_err(|e| format!("Failed to write mmc-pack.json: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -1680,7 +1830,7 @@ async fn check_manifest_updates(
     instance_base: String,
 ) -> Result<String, String> {
     println!("Checking for manifest updates from: {}", manifest_url);
-    
+
     // Download and parse the manifest
     let client = reqwest::Client::new();
     let manifest_response = client
@@ -1688,39 +1838,40 @@ async fn check_manifest_updates(
         .send()
         .await
         .map_err(|e| format!("Failed to download manifest: {}", e))?;
-    
+
     let manifest_text = manifest_response
         .text()
         .await
         .map_err(|e| format!("Failed to read manifest text: {}", e))?;
-    
+
     let manifest: StoryManifest = serde_json::from_str(&manifest_text)
         .map_err(|e| format!("Failed to parse manifest JSON: {}", e))?;
-    
-    println!("Checking updates for: {} v{}", manifest.instance.name, manifest.instance.version);
-    
+
+    println!(
+        "Checking updates for: {} v{}",
+        manifest.instance.name, manifest.instance.version
+    );
+
     // Check if the Story instance exists
     let story_path = Path::new(&instance_base).join("Story");
     if !story_path.exists() {
         return Ok("Instance not found - needs to be created".to_string());
     }
-    
+
     // Check if we have a version tracking file
     let version_file = story_path.join(".current_version.json");
     let current_version_info = if version_file.exists() {
         match std::fs::read_to_string(&version_file) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(version_data) => Some(version_data),
-                    Err(_) => None,
-                }
-            }
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(version_data) => Some(version_data),
+                Err(_) => None,
+            },
             Err(_) => None,
         }
     } else {
         None
     };
-    
+
     // If no version file exists, we need updates
     let current_version_info = match current_version_info {
         Some(info) => info,
@@ -1728,42 +1879,56 @@ async fn check_manifest_updates(
             return Ok(format!("Updates available - no version tracking found"));
         }
     };
-    
+
     // Extract current version info
-    let current_instance_name = current_version_info.get("instance_name")
+    let current_instance_name = current_version_info
+        .get("instance_name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let current_instance_version = current_version_info.get("instance_version")
+    let current_instance_version = current_version_info
+        .get("instance_version")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let current_extra_mods = current_version_info.get("extra_mods")
+    let current_extra_mods = current_version_info
+        .get("extra_mods")
         .and_then(|v| v.as_array())
         .map(|arr| arr.len())
         .unwrap_or(0);
-    
+
     // Compare with manifest
     let manifest_extra_mods = manifest.extra_mods.as_ref().map(|m| m.len()).unwrap_or(0);
-    
+
     let mut update_reasons = Vec::new();
-    
+
     // Check if instance name or version changed
     if current_instance_name != manifest.instance.name {
-        update_reasons.push(format!("Instance name changed: {} -> {}", current_instance_name, manifest.instance.name));
+        update_reasons.push(format!(
+            "Instance name changed: {} -> {}",
+            current_instance_name, manifest.instance.name
+        ));
     }
-    
+
     if current_instance_version != manifest.instance.version {
-        update_reasons.push(format!("Instance version changed: {} -> {}", current_instance_version, manifest.instance.version));
+        update_reasons.push(format!(
+            "Instance version changed: {} -> {}",
+            current_instance_version, manifest.instance.version
+        ));
     }
-    
+
     // Check if extra mods count changed
     if current_extra_mods != manifest_extra_mods {
-        update_reasons.push(format!("Extra mods count changed: {} -> {}", current_extra_mods, manifest_extra_mods));
+        update_reasons.push(format!(
+            "Extra mods count changed: {} -> {}",
+            current_extra_mods, manifest_extra_mods
+        ));
     }
-    
+
     // Check individual mod versions if we have detailed info
     if let (Some(current_mods_array), Some(manifest_mods)) = (
-        current_version_info.get("extra_mods").and_then(|v| v.as_array()),
-        &manifest.extra_mods
+        current_version_info
+            .get("extra_mods")
+            .and_then(|v| v.as_array()),
+        &manifest.extra_mods,
     ) {
         for manifest_mod in manifest_mods {
             let mod_found = current_mods_array.iter().any(|current_mod| {
@@ -1771,17 +1936,24 @@ async fn check_manifest_updates(
                 let current_version = current_mod.get("version").and_then(|v| v.as_str());
                 let manifest_name = &manifest_mod.name;
                 let manifest_version = manifest_mod.version.as_ref().map(|v| v.as_str());
-                
+
                 current_name == Some(manifest_name) && current_version == manifest_version
             });
-            
+
             if !mod_found {
-                let version_text = manifest_mod.version.as_ref().map(|v| format!(" v{}", v)).unwrap_or_else(|| " (auto-detect)".to_string());
-                update_reasons.push(format!("Mod update needed: {}{}", manifest_mod.name, version_text));
+                let version_text = manifest_mod
+                    .version
+                    .as_ref()
+                    .map(|v| format!(" v{}", v))
+                    .unwrap_or_else(|| " (auto-detect)".to_string());
+                update_reasons.push(format!(
+                    "Mod update needed: {}{}",
+                    manifest_mod.name, version_text
+                ));
             }
         }
     }
-    
+
     if update_reasons.is_empty() {
         Ok("No updates available - everything is up to date".to_string())
     } else {
@@ -1796,42 +1968,57 @@ async fn find_best_mod_version(
     minecraft_version: &str,
     loader: &str,
 ) -> Result<ModrinthVersionResponse, String> {
-    println!("Finding best version for mod {} with Minecraft {} and loader {}", mod_name, minecraft_version, loader);
-    
+    println!(
+        "Finding best version for mod {} with Minecraft {} and loader {}",
+        mod_name, minecraft_version, loader
+    );
+
     let api_url = format!("https://api.modrinth.com/v2/project/{}/version", mod_name);
     println!("Fetching versions from: {}", api_url);
-    
+
     let response = client
         .get(&api_url)
         .send()
         .await
         .map_err(|e| format!("Failed to fetch mod versions: {}", e))?;
-    
+
     let versions: Vec<ModrinthVersionResponse> = response
         .json()
         .await
         .map_err(|e| format!("Failed to parse mod versions: {}", e))?;
-    
+
     println!("Found {} versions for mod {}", versions.len(), mod_name);
-    
+
     // Find the first version that supports our Minecraft version and loader
     for version in versions {
-        let supports_minecraft = version.game_versions.contains(&minecraft_version.to_string());
+        let supports_minecraft = version
+            .game_versions
+            .contains(&minecraft_version.to_string());
         let supports_loader = version.loaders.contains(&loader.to_string());
-        
-        println!("Checking version {} ({}): MC={}, Loader={}, Supports MC={}, Supports Loader={}", 
-                version.version_number, version.id, 
-                version.game_versions.join(","), version.loaders.join(","),
-                supports_minecraft, supports_loader);
-        
+
+        println!(
+            "Checking version {} ({}): MC={}, Loader={}, Supports MC={}, Supports Loader={}",
+            version.version_number,
+            version.id,
+            version.game_versions.join(","),
+            version.loaders.join(","),
+            supports_minecraft,
+            supports_loader
+        );
+
         if supports_minecraft && supports_loader {
-            println!("Found compatible version: {} ({}) for MC {} and loader {}", 
-                    version.version_number, version.id, minecraft_version, loader);
+            println!(
+                "Found compatible version: {} ({}) for MC {} and loader {}",
+                version.version_number, version.id, minecraft_version, loader
+            );
             return Ok(version);
         }
     }
-    
-    Err(format!("No compatible version found for mod {} with Minecraft {} and loader {}", mod_name, minecraft_version, loader))
+
+    Err(format!(
+        "No compatible version found for mod {} with Minecraft {} and loader {}",
+        mod_name, minecraft_version, loader
+    ))
 }
 
 // Function to download dependencies for a mod
@@ -1846,34 +2033,40 @@ fn download_mod_dependencies(
 ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
     Box::pin(async move {
         let mut downloaded_mods = downloaded_mods;
-        
+
         for dependency in dependencies {
             // Skip if dependency type is not required
             if dependency.dependency_type != "required" {
-                println!("Skipping non-required dependency: {:?}", dependency.project_id);
+                println!(
+                    "Skipping non-required dependency: {:?}",
+                    dependency.project_id
+                );
                 continue;
             }
-            
+
             if let Some(project_id) = &dependency.project_id {
                 // Skip if we already downloaded this mod
                 if downloaded_mods.contains(project_id) {
                     println!("Dependency {} already downloaded, skipping", project_id);
                     continue;
                 }
-                
+
                 println!("Downloading required dependency: {}", project_id);
-                
+
                 // Mark as downloaded to prevent cycles
                 downloaded_mods.insert(project_id.clone());
-                
+
                 // Find the best version for this dependency
-                match find_best_mod_version(&client, project_id, &minecraft_version, &loader).await {
+                match find_best_mod_version(&client, project_id, &minecraft_version, &loader).await
+                {
                     Ok(dep_version) => {
                         // Download the dependency
-                        match download_single_mod_file(&window, &client, &dep_version, &mods_dir).await {
+                        match download_single_mod_file(&window, &client, &dep_version, &mods_dir)
+                            .await
+                        {
                             Ok(_) => {
                                 println!("Successfully downloaded dependency: {}", project_id);
-                                
+
                                 // Recursively download dependencies of this dependency
                                 if let Err(e) = download_mod_dependencies(
                                     window.clone(),
@@ -1883,22 +2076,33 @@ fn download_mod_dependencies(
                                     loader.clone(),
                                     mods_dir.clone(),
                                     downloaded_mods.clone(),
-                                ).await {
-                                    println!("Warning: Failed to download sub-dependencies for {}: {}", project_id, e);
+                                )
+                                .await
+                                {
+                                    println!(
+                                        "Warning: Failed to download sub-dependencies for {}: {}",
+                                        project_id, e
+                                    );
                                 }
                             }
                             Err(e) => {
-                                println!("Warning: Failed to download dependency {}: {}", project_id, e);
+                                println!(
+                                    "Warning: Failed to download dependency {}: {}",
+                                    project_id, e
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        println!("Warning: Failed to find compatible version for dependency {}: {}", project_id, e);
+                        println!(
+                            "Warning: Failed to find compatible version for dependency {}: {}",
+                            project_id, e
+                        );
                     }
                 }
             }
         }
-        
+
         Ok(())
     })
 }
@@ -1911,13 +2115,17 @@ async fn download_single_mod_file(
     mods_dir: &str,
 ) -> Result<String, String> {
     // Find the primary .jar file
-    let jar_file = version_info.files
+    let jar_file = version_info
+        .files
         .iter()
         .find(|f| f.primary && f.filename.ends_with(".jar"))
         .ok_or("No primary .jar file found")?;
-    
-    println!("Downloading jar file: {} ({} bytes)", jar_file.filename, jar_file.size);
-    
+
+    println!(
+        "Downloading jar file: {} ({} bytes)",
+        jar_file.filename, jar_file.size
+    );
+
     /*
     // Emit progress update to frontend
     let _ = window.emit(
@@ -1937,39 +2145,43 @@ async fn download_single_mod_file(
         .send()
         .await
         .map_err(|e| format!("Failed to download jar: {}", e))?;
-    
+
     let jar_bytes = jar_response
         .bytes()
         .await
         .map_err(|e| format!("Failed to read jar bytes: {}", e))?;
-    
+
     // Ensure mods directory exists
     std::fs::create_dir_all(mods_dir).map_err(|e| e.to_string())?;
-    
+
     // Save the jar file
     let jar_path = Path::new(mods_dir).join(&jar_file.filename);
     std::fs::write(&jar_path, &jar_bytes).map_err(|e| e.to_string())?;
-    
-    Ok(format!("Downloaded: {} ({})", jar_file.filename, jar_path.display()))
+
+    Ok(format!(
+        "Downloaded: {} ({})",
+        jar_file.filename,
+        jar_path.display()
+    ))
 }
 
 // Helper function to get mod names from existing files
 fn get_existing_mod_names(mods_dir: &Path) -> Result<std::collections::HashSet<String>, String> {
     let mut existing_mods = std::collections::HashSet::new();
-    
+
     if !mods_dir.exists() {
         return Ok(existing_mods);
     }
-    
+
     println!("Scanning existing mods in: {}", mods_dir.display());
-    
-    let entries = std::fs::read_dir(mods_dir)
-        .map_err(|e| format!("Failed to read mods directory: {}", e))?;
-    
+
+    let entries =
+        std::fs::read_dir(mods_dir).map_err(|e| format!("Failed to read mods directory: {}", e))?;
+
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
-        
+
         if path.is_file() && path.extension().map_or(false, |ext| ext == "jar") {
             if let Some(file_name) = path.file_stem() {
                 if let Some(file_str) = file_name.to_str() {
@@ -1977,12 +2189,15 @@ fn get_existing_mod_names(mods_dir: &Path) -> Result<std::collections::HashSet<S
                     let mod_name = extract_mod_name_from_filename(file_str);
                     let normalized_name = normalize_mod_name(&mod_name);
                     existing_mods.insert(normalized_name.clone());
-                    println!("Found existing mod: {} -> {} -> {}", file_str, mod_name, normalized_name);
+                    println!(
+                        "Found existing mod: {} -> {} -> {}",
+                        file_str, mod_name, normalized_name
+                    );
                 }
             }
         }
     }
-    
+
     println!("Found {} existing mod files", existing_mods.len());
     Ok(existing_mods)
 }
@@ -1990,65 +2205,79 @@ fn get_existing_mod_names(mods_dir: &Path) -> Result<std::collections::HashSet<S
 // Helper function to extract mod name from filename
 fn extract_mod_name_from_filename(filename: &str) -> String {
     let mut name = filename.to_lowercase();
-    
+
     // Remove common loader suffixes first (case insensitive)
     let loader_patterns = vec![
-        "_fabric_", "_forge_", "_neoforge_", "_quilt_",
-        "-fabric-", "-forge-", "-neoforge-", "-quilt-",
-        "_fabric", "_forge", "_neoforge", "_quilt",
-        "-fabric", "-forge", "-neoforge", "-quilt",
+        "_fabric_",
+        "_forge_",
+        "_neoforge_",
+        "_quilt_",
+        "-fabric-",
+        "-forge-",
+        "-neoforge-",
+        "-quilt-",
+        "_fabric",
+        "_forge",
+        "_neoforge",
+        "_quilt",
+        "-fabric",
+        "-forge",
+        "-neoforge",
+        "-quilt",
     ];
-    
+
     for pattern in loader_patterns {
         if let Some(pos) = name.find(pattern) {
             name = name[..pos].to_string();
             break;
         }
     }
-    
+
     // Remove version patterns by looking for common patterns
     // Look for patterns like _v6.1.12_, _mc1.21_, etc.
-    let version_patterns = vec![
-        "_v", "_mc", "-v", "-mc", "+v", "+mc"
-    ];
-    
+    let version_patterns = vec!["_v", "_mc", "-v", "-mc", "+v", "+mc"];
+
     for pattern in version_patterns {
         if let Some(pos) = name.find(pattern) {
             name = name[..pos].to_string();
             break;
         }
     }
-    
+
     // Also look for pure version numbers at the end
     let parts: Vec<&str> = name.split(&['-', '_', '+'][..]).collect();
     let mut clean_parts = Vec::new();
-    
+
     for part in parts {
         // Skip if this looks like a version number
         if part.is_empty() {
             continue;
         }
-        
+
         // Check if this part looks like a version
         if part.chars().next().map_or(false, |c| c.is_ascii_digit()) ||
            part.starts_with("1.") || // Minecraft versions like 1.21.1
-           part.chars().all(|c| c.is_ascii_digit() || c == '.') { // Pure version numbers
+           part.chars().all(|c| c.is_ascii_digit() || c == '.')
+        {
+            // Pure version numbers
             break; // Stop processing once we hit a version-like part
         }
-        
+
         clean_parts.push(part);
     }
-    
+
     // Join the clean parts back together
-    let result = clean_parts.join("-").trim_end_matches('-').trim_end_matches('_').to_string();
-    
+    let result = clean_parts
+        .join("-")
+        .trim_end_matches('-')
+        .trim_end_matches('_')
+        .to_string();
+
     // Final cleanup - normalize separators
     result.replace("_", "-")
 }
 
 // Helper function to normalize mod names for comparison
 fn normalize_mod_name(name: &str) -> String {
-    name.to_lowercase()
-        .replace("_", "-")
-        .replace(" ", "-")
+    name.to_lowercase().replace("_", "-").replace(" ", "-")
 }
