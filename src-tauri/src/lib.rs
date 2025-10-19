@@ -34,33 +34,33 @@ fn clear_downloaded_files() {
 }
 // Add new structs for Modrinth API and manifest handling
 #[derive(Serialize, Deserialize)]
-struct ModrinthVersionResponse {
-    game_versions: Vec<String>,
-    loaders: Vec<String>,
-    id: String,
-    project_id: String,
-    name: String,
-    version_number: String,
-    changelog: Option<String>,
-    files: Vec<ModrinthFile>,
-    dependencies: Vec<ModrinthDependency>,
+pub struct ModrinthVersionResponse {
+    pub game_versions: Vec<String>,
+    pub loaders: Vec<String>,
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub version_number: String,
+    pub changelog: Option<String>,
+    pub files: Vec<ModrinthFile>,
+    pub dependencies: Vec<ModrinthDependency>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct ModrinthFile {
-    hashes: HashMap<String, String>,
-    url: String,
-    filename: String,
-    primary: bool,
-    size: u64,
+pub struct ModrinthFile {
+    pub hashes: HashMap<String, String>,
+    pub url: String,
+    pub filename: String,
+    pub primary: bool,
+    pub size: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct ModrinthDependency {
-    version_id: Option<String>,
-    project_id: Option<String>,
-    file_name: Option<String>,
-    dependency_type: String,
+pub struct ModrinthDependency {
+    pub version_id: Option<String>,
+    pub project_id: Option<String>,
+    pub file_name: Option<String>,
+    pub dependency_type: String,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -69,22 +69,22 @@ struct HashRegistry {
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct FileHashRegistry {
-    files: HashMap<String, FileInfo>, // URL -> file info
+pub struct FileHashRegistry {
+    pub files: HashMap<String, FileInfo>, // URL -> file info
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct FileInfo {
-    hash: String,
-    last_modified: String,
+pub struct FileInfo {
+    pub hash: String,
+    pub last_modified: String,
 }
 
 // Legacy manifest structure for old zip-based downloads
-#[derive(Deserialize)]
-struct LegacyManifestFile {
-    delete: Option<Vec<String>>,
-    notes: Option<String>,
-    required_files: Option<Vec<String>>,
+#[derive(Serialize, Deserialize)]
+pub struct LegacyManifestFile {
+    pub delete: Option<Vec<String>>,
+    pub notes: Option<String>,
+    pub required_files: Option<Vec<String>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -205,7 +205,7 @@ fn create_story_instance(instance_base: String, folder_name: String) -> Result<S
 }
 
 // Add this function to verify extraction integrity based on manifest requirements
-fn verify_extraction_integrity(
+pub fn verify_extraction_integrity(
     extract_path: &Path,
     manifest_data: &Option<LegacyManifestFile>,
 ) -> Result<bool, String> {
@@ -918,42 +918,42 @@ InstanceType=OneSix
 }
 
 #[derive(Serialize, Deserialize)]
-struct ModrinthIndex {
-    files: Vec<ModrinthIndexFile>,
+pub struct ModrinthIndex {
+    pub files: Vec<ModrinthIndexFile>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct ModrinthIndexFile {
-    path: String,
-    hashes: HashMap<String, String>,
-    downloads: Vec<String>,
+pub struct ModrinthIndexFile {
+    pub path: String,
+    pub hashes: HashMap<String, String>,
+    pub downloads: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct StoryManifest {
-    instance: InstanceConfig,
-    extra_mods: Option<Vec<ExtraMod>>,
-    overrides: Option<Vec<Override>>,
+pub struct StoryManifest {
+    pub instance: InstanceConfig,
+    pub extra_mods: Option<Vec<ExtraMod>>,
+    pub overrides: Option<Vec<Override>>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct InstanceConfig {
-    name: String,
-    version: String,
-    minecraft_version: Option<String>,
-    loader: Option<String>,
+pub struct InstanceConfig {
+    pub name: String,
+    pub version: String,
+    pub minecraft_version: Option<String>,
+    pub loader: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct ExtraMod {
-    name: String,
-    version: Option<String>,
+pub struct ExtraMod {
+    pub name: String,
+    pub version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct Override {
-    name: String,
-    url: String,
+pub struct Override {
+    pub name: String,
+    pub url: String,
 }
 
 #[tauri::command]
@@ -1873,7 +1873,7 @@ async fn download_modrinth_mod(
     ))
 }
 
-fn create_instance_config(
+pub fn create_instance_config(
     story_path: &Path,
     version_info: &ModrinthVersionResponse,
 ) -> Result<(), String> {
@@ -2438,7 +2438,7 @@ fn get_existing_mod_names(mods_dir: &Path) -> Result<std::collections::HashSet<S
 }
 
 // Helper function to extract mod name from filename
-fn extract_mod_name_from_filename(filename: &str) -> String {
+pub fn extract_mod_name_from_filename(filename: &str) -> String {
     let mut name = filename.to_lowercase();
 
     // Remove common loader suffixes first (case insensitive)
@@ -2513,7 +2513,7 @@ fn extract_mod_name_from_filename(filename: &str) -> String {
 }
 
 // Helper function to normalize mod names for comparison
-fn normalize_mod_name(name: &str) -> String {
+pub fn normalize_mod_name(name: &str) -> String {
     name.to_lowercase()
         .replace("_", "-")
         .replace(" ", "-")
@@ -2521,5 +2521,26 @@ fn normalize_mod_name(name: &str) -> String {
         .replace("-", "") // Remove all dashes for better matching
         .trim_matches('-') // Remove leading/trailing dashes
         .to_string()
+}
+
+// Public wrapper functions for testing
+pub fn test_check_story_instance(instance_base: String, folder_name: String) -> bool {
+    check_story_instance(instance_base, folder_name)
+}
+
+pub fn test_is_base_installed(instance_base: String) -> bool {
+    is_base_installed(instance_base)
+}
+
+pub fn test_check_path_exists(path: String) -> bool {
+    check_path_exists(path)
+}
+
+pub fn test_create_story_instance(instance_base: String, folder_name: String) -> Result<String, String> {
+    create_story_instance(instance_base, folder_name)
+}
+
+pub fn test_finalize_instance(instance_path: String) -> Result<(), String> {
+    finalize_instance(instance_path)
 }
 
