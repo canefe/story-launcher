@@ -3801,6 +3801,7 @@ dependencies = [
  "chrono",
  "dunce",
  "fs_extra",
+ "lazy_static",
  "reqwest 0.11.27",
  "serde",
  "serde_json",

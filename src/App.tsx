@@ -30,7 +30,20 @@ function App() {
 
   const [instanceExists, setInstanceExists] = useState(false);
 
-  const { instanceFolderName } = useSettingsStore();
+  const { instanceFolderName, selectedLauncher } = useSettingsStore();
+
+  // Helper function to get default instances path (same as in settings store)
+  const getDefaultInstancesPath = (): string => {
+    const platform = navigator.platform.toLowerCase();
+    
+    if (platform.includes('win')) {
+      return "\\AppData\\Roaming\\MultiMC\\instances\\";
+    } else if (platform.includes('mac')) {
+      return "/Library/Application Support/MultiMC/instances/";
+    } else {
+      return "/.local/share/MultiMC/instances/";
+    }
+  };
 
   const appWindow = getCurrentWindow();
 
@@ -148,7 +161,7 @@ function App() {
 
   async function checkForUpdates() {
     try {
-      const path = await getPollyMCInstancePath();
+      const path = await findLauncherInstancesPath();
       // Check for manifest-based updates
       const updateInfo = await invoke("check_manifest_updates", {
         manifestUrl: manifestUrl,
@@ -167,7 +180,7 @@ function App() {
     setCurrentFile("");
 
     try {
-      const path = await getPollyMCInstancePath();
+      const path = await findLauncherInstancesPath();
       const result = await invoke("download_from_manifest", {
         manifestUrl: manifestUrl,
         instanceBase: path,
@@ -185,25 +198,81 @@ function App() {
     }
   }
 
-  async function getPollyMCInstancePath(): Promise<string> {
+
+  async function findLauncherInstancesPath(): Promise<string> {
     const home = await homeDir();
-    console.log("Home directory:", home);
-    // get settings store
-    const instancesPath = useSettingsStore.getState().instancesPath;
-    if (instancesPath) {
-      return `${home}${instancesPath}`;
+    const platform = navigator.platform.toLowerCase();
+    
+    // Check if user has selected a specific launcher
+    if (selectedLauncher) {
+      console.log(`Using selected launcher: ${selectedLauncher.name} at ${selectedLauncher.path}`);
+      return selectedLauncher.path;
     }
-    // Default path if not set in settings
-    return `${home}\\AppData\\Roaming\\PollyMC\\instances\\`;
+    
+    // Check if user has already set a custom path in settings
+    const currentSettings = useSettingsStore.getState();
+    if (currentSettings.instancesPath && currentSettings.instancesPath !== getDefaultInstancesPath()) {
+      // Check if it's already an absolute path
+      if (currentSettings.instancesPath.startsWith('/') || currentSettings.instancesPath.includes(':\\')) {
+        console.log(`Using user-set absolute path: ${currentSettings.instancesPath}`);
+        return currentSettings.instancesPath;
+      } else {
+        console.log(`Using user-set relative path: ${home}${currentSettings.instancesPath}`);
+        return `${home}${currentSettings.instancesPath}`;
+      }
+    }
+    
+    // Define possible paths for different launchers
+    const possiblePaths = [];
+    
+    if (platform.includes('win')) {
+      // Windows paths
+      possiblePaths.push(
+        `${home}\\AppData\\Roaming\\MultiMC\\instances\\`,
+        `${home}\\AppData\\Roaming\\PollyMC\\instances\\`,
+        `${home}\\AppData\\Roaming\\PrismLauncher\\instances\\`
+      );
+    } else if (platform.includes('mac')) {
+      // macOS paths
+      possiblePaths.push(
+        `${home}/Library/Application Support/MultiMC/instances/`,
+        `${home}/Library/Application Support/PollyMC/instances/`,
+        `${home}/Library/Application Support/PrismLauncher/instances/`
+      );
+    } else {
+      // Linux paths
+      possiblePaths.push(
+        `${home}/.local/share/MultiMC/instances/`,
+        `${home}/.local/share/PollyMC/instances/`,
+        `${home}/.local/share/PrismLauncher/instances/`
+      );
+    }
+    
+    // Check which path exists
+    for (const path of possiblePaths) {
+      try {
+        const result = await invoke("check_path_exists", { path });
+        if (result) {
+          console.log(`Found launcher instances at: ${path}`);
+          return path;
+        }
+      } catch (error) {
+        console.log(`Path ${path} does not exist: ${error}`);
+      }
+    }
+    
+    // Return the first path as default if none found
+    return possiblePaths[0];
   }
 
+
   const runCheck = async () => {
-    const path = await getPollyMCInstancePath();
+    const path = await findLauncherInstancesPath();
     await checkStoryInstance(path);
   };
 
   const createInstance = async () => {
-    const path = await getPollyMCInstancePath();
+    const path = await findLauncherInstancesPath();
     await createStoryInstance(path);
     await checkStoryInstance(path);
   };

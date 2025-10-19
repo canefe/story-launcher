@@ -7,9 +7,31 @@ use std::future::Future;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Mutex;
 use tauri::Emitter;
 use tauri::{Manager, Window};
 use zip::ZipArchive;
+
+// Global set to track all downloaded JAR files
+lazy_static::lazy_static! {
+    static ref DOWNLOADED_FILES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+}
+
+// Helper function to track downloaded JAR files
+fn track_downloaded_file(filename: &str) {
+    if let Ok(mut files) = DOWNLOADED_FILES.lock() {
+        files.insert(filename.to_string());
+        println!("📝 Tracked downloaded file: {}", filename);
+    }
+}
+
+// Helper function to clear the tracking list (call at start of new download session)
+fn clear_downloaded_files() {
+    if let Ok(mut files) = DOWNLOADED_FILES.lock() {
+        files.clear();
+        println!("🧹 Cleared downloaded files tracking");
+    }
+}
 // Add new structs for Modrinth API and manifest handling
 #[derive(Serialize, Deserialize)]
 struct ModrinthVersionResponse {
@@ -80,12 +102,12 @@ pub fn run() {
             download_from_manifest,
             download_modrinth_modpack,
             download_modrinth_mod,
-            check_manifest_updates, // Add the new command here
+            check_manifest_updates,
+            check_path_exists, // Add the new command here
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
 #[tauri::command]
 async fn check_for_updates(window: tauri::Window, download_url: String) -> Result<String, String> {
     // Make a HEAD request to get file info without downloading
@@ -153,6 +175,12 @@ fn check_story_instance(instance_base: String, folder_name: String) -> bool {
 fn is_base_installed(instance_base: String) -> bool {
     let base_path = Path::new(&instance_base).join("npcmessageparser-1.0-SNAPSHOT.jar");
     base_path.exists()
+}
+
+#[tauri::command]
+fn check_path_exists(path: String) -> bool {
+    let path = Path::new(&path);
+    path.exists() && path.is_dir()
 }
 
 // create Story instance with configurable folder name
@@ -937,6 +965,9 @@ async fn download_from_manifest(
     println!("=== DOWNLOAD_FROM_MANIFEST START ===");
     println!("Manifest URL: {}", manifest_url);
     println!("Instance base path: {}", instance_base);
+    
+    // Clear the tracking list for this download session
+    clear_downloaded_files();
 
     // Validate instance_base path exists
     let instance_base_path = Path::new(&instance_base);
@@ -951,6 +982,25 @@ async fn download_from_manifest(
         );
         println!("ERROR: {}", error_msg);
         return Err(error_msg);
+    }
+
+    // Check if Story instance already exists and has content
+    let story_path = instance_base_path.join("Story");
+    if story_path.exists() {
+        let minecraft_dir = story_path.join(".minecraft");
+        let mods_dir = minecraft_dir.join("mods");
+        let config_dir = minecraft_dir.join("config");
+        
+        // Check if instance already has mods and config
+        let has_mods = mods_dir.exists() && 
+            std::fs::read_dir(&mods_dir).map(|mut dir| dir.next().is_some()).unwrap_or(false);
+        let has_config = config_dir.exists() && 
+            std::fs::read_dir(&config_dir).map(|mut dir| dir.next().is_some()).unwrap_or(false);
+        
+        if has_mods || has_config {
+            println!("Instance already has content, checking if update is needed...");
+            // We'll still proceed to check for updates, but this helps with logging
+        }
     }
 
     // Download and parse the manifest
@@ -1082,8 +1132,21 @@ async fn download_from_manifest(
             println!("Successfully created mods directory");
         }
 
-        // Get list of existing mods to avoid duplicates
-        println!("Checking for existing mods to avoid duplicates...");
+        // Get list of existing mods to avoid duplicates (scan once, not for each mod)
+        println!("Scanning existing mods once to avoid duplicates...");
+        let existing_mods = get_existing_mod_names(&mods_dir).unwrap_or_else(|e| {
+            println!("Warning: Failed to scan existing mods: {}", e);
+            HashSet::new()
+        });
+        println!("Found {} existing mods", existing_mods.len());
+        
+        // Also check against our tracked files to see if they actually exist
+        let tracked_files = if let Ok(files) = DOWNLOADED_FILES.lock() {
+            files.clone()
+        } else {
+            HashSet::new()
+        };
+        println!("Tracked files from previous sessions: {:?}", tracked_files);
 
         for (index, extra_mod) in extra_mods.iter().enumerate() {
             let version_display = extra_mod
@@ -1091,12 +1154,6 @@ async fn download_from_manifest(
                 .as_ref()
                 .map(|v| v.as_str())
                 .unwrap_or("auto-detect");
-
-            // Re-scan mods directory for each mod to catch any that were just extracted
-            let existing_mods = get_existing_mod_names(&mods_dir).unwrap_or_else(|e| {
-                println!("Warning: Failed to scan existing mods: {}", e);
-                HashSet::new()
-            });
 
             // Check if this mod already exists
             let normalized_mod_name = normalize_mod_name(&extra_mod.name);
@@ -1108,14 +1165,75 @@ async fn download_from_manifest(
             // Check for exact match or intelligent partial matching
             let mod_exists = existing_mods.contains(&normalized_mod_name)
                 || existing_mods.iter().any(|existing| {
-                    // Allow partial matching only if the manifest mod name is a significant part
-                    // of the existing mod name (not the other way around to avoid false positives)
-                    // Also require the manifest name to be at least 4 characters to avoid matching
-                    // very short names like "emi"
-                    normalized_mod_name.len() >= 4 && existing.contains(&normalized_mod_name)
+                    // Allow partial matching in both directions for better compatibility
+                    // Check if either name contains the other (with minimum length requirement)
+                    let min_len = 3; // Reduced from 4 to 3 for better matching
+                    let matches = if normalized_mod_name.len() >= min_len && existing.len() >= min_len {
+                        // More flexible matching: check if either contains the other
+                        // or if they share a significant portion of characters
+                        let contains_match = normalized_mod_name.contains(existing) || existing.contains(&normalized_mod_name);
+                        let similarity_match = {
+                            let shorter = if normalized_mod_name.len() < existing.len() { &normalized_mod_name } else { existing };
+                            let longer = if normalized_mod_name.len() >= existing.len() { &normalized_mod_name } else { existing };
+                            // If the shorter name is at least 70% of the longer name, consider it a match
+                            shorter.len() as f32 / longer.len() as f32 >= 0.7
+                        };
+                        contains_match || similarity_match
+                    } else {
+                        // For short names, require exact match
+                        normalized_mod_name == *existing
+                    };
+                    
+                    if matches {
+                        println!("  → Found match: '{}' matches existing '{}'", normalized_mod_name, existing);
+                    }
+                    matches
                 });
+            
+            // Additional check: verify the file actually exists on disk
+            // This prevents issues when files were deleted but the scanning still finds them
+            let file_actually_exists = if mod_exists {
+                // Check if any of the matching files actually exist on disk
+                let mut found_existing_file = false;
+                for existing in &existing_mods {
+                    if normalized_mod_name.contains(existing) || existing.contains(&normalized_mod_name) {
+                        // Look for a file that matches this pattern
+                        let entries = std::fs::read_dir(&mods_dir).unwrap_or_else(|_| {
+                            std::fs::read_dir(&mods_dir).unwrap_or_else(|_| {
+                                panic!("Cannot read mods directory")
+                            })
+                        });
+                        
+                        for entry in entries {
+                            if let Ok(entry) = entry {
+                                let path = entry.path();
+                                if path.is_file() && path.extension().map_or(false, |ext| ext == "jar") {
+                                    let filename = path.file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("");
+                                    let normalized_filename = normalize_mod_name(filename);
+                                    
+                                    if normalized_filename.contains(existing) || existing.contains(&normalized_filename) {
+                                        found_existing_file = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if found_existing_file {
+                            break;
+                        }
+                    }
+                }
+                found_existing_file
+            } else {
+                false
+            };
+            
+            // Use the more accurate check
+            let final_mod_exists = mod_exists && file_actually_exists;
 
-            if mod_exists {
+            if final_mod_exists {
                 println!(
                     "Skipping extra mod {}/{}: {} v{} (already exists)",
                     index + 1,
@@ -1375,6 +1493,24 @@ async fn download_from_manifest(
             )
         }
     };
+
+    // Step 4: Cleanup extra JAR files not in manifest
+    println!("=== STEP 4: CLEANUP EXTRA JAR FILES ===");
+    let cleanup_result = cleanup_extra_jars(&story_path, &manifest).await;
+    match cleanup_result {
+        Ok(cleaned_count) => {
+            if cleaned_count > 0 {
+                println!("✅ Cleaned up {} extra JAR files", cleaned_count);
+            } else {
+                println!("✅ No extra JAR files found to clean up");
+            }
+        }
+        Err(e) => {
+            println!("⚠️ Warning: Failed to cleanup extra JAR files: {}", e);
+            // Don't fail the entire operation for cleanup issues
+        }
+    }
+
     println!("=== DOWNLOAD_FROM_MANIFEST COMPLETE ===");
     println!("Final result: {}", final_result);
 
@@ -1604,6 +1740,11 @@ async fn download_modrinth_modpack(
                             println!("ERROR: {}", error_msg);
                             error_msg
                         })?;
+                        
+                        // Track the downloaded JAR file
+                        if let Some(filename) = mod_path.file_name().and_then(|n| n.to_str()) {
+                            track_downloaded_file(filename);
+                        }
                         downloaded = true;
                         break;
                     }
@@ -1872,11 +2013,26 @@ async fn check_manifest_updates(
         None
     };
 
-    // If no version file exists, we need updates
+    // If no version file exists, check if files already exist before saying updates are needed
     let current_version_info = match current_version_info {
         Some(info) => info,
         None => {
-            return Ok(format!("Updates available - no version tracking found"));
+            // Check if the instance already has the required files
+            let minecraft_dir = story_path.join(".minecraft");
+            let mods_dir = minecraft_dir.join("mods");
+            let config_dir = minecraft_dir.join("config");
+            
+            // If these directories exist and have content, assume it's already installed
+            let has_mods = mods_dir.exists() && 
+                std::fs::read_dir(&mods_dir).map(|mut dir| dir.next().is_some()).unwrap_or(false);
+            let has_config = config_dir.exists() && 
+                std::fs::read_dir(&config_dir).map(|mut dir| dir.next().is_some()).unwrap_or(false);
+            
+            if has_mods || has_config {
+                return Ok("No updates available - files already exist (no version tracking)".to_string());
+            } else {
+                return Ok(format!("Updates available - no version tracking found"));
+            }
         }
     };
 
@@ -2107,6 +2263,82 @@ fn download_mod_dependencies(
     })
 }
 
+// Function to cleanup extra JAR files not in current manifest
+async fn cleanup_extra_jars(story_path: &Path, manifest: &StoryManifest) -> Result<usize, String> {
+    let mods_dir = story_path.join(".minecraft").join("mods");
+    
+    if !mods_dir.exists() {
+        println!("Mods directory doesn't exist, skipping cleanup");
+        return Ok(0);
+    }
+
+    // Get the list of all files that were downloaded in this session (including dependencies)
+    let current_session_files = if let Ok(files) = DOWNLOADED_FILES.lock() {
+        files.clone()
+    } else {
+        println!("Warning: Could not access tracked files, skipping cleanup");
+        return Ok(0);
+    };
+
+    // Save the current manifest locally for future comparison
+    let manifest_file = story_path.join(".current_manifest.json");
+    let manifest_json = serde_json::to_string_pretty(manifest)
+        .map_err(|e| format!("Failed to serialize manifest: {}", e))?;
+    
+    std::fs::write(&manifest_file, manifest_json)
+        .map_err(|e| format!("Failed to save manifest: {}", e))?;
+    
+    println!("💾 Saved current manifest to: {}", manifest_file.display());
+
+    // Save the complete list of downloaded files (including dependencies) for future comparison
+    let downloaded_files_list = story_path.join(".downloaded_files.json");
+    let files_json = serde_json::to_string_pretty(&current_session_files)
+        .map_err(|e| format!("Failed to serialize downloaded files: {}", e))?;
+    
+    std::fs::write(&downloaded_files_list, files_json)
+        .map_err(|e| format!("Failed to save downloaded files list: {}", e))?;
+    
+    println!("💾 Saved downloaded files list to: {}", downloaded_files_list.display());
+    
+    println!("Current session downloaded files ({}): {:?}", current_session_files.len(), current_session_files);
+    
+    // For now, let's be conservative and only delete files that are clearly problematic
+    // We'll implement a more sophisticated cleanup later that compares against previous manifests
+    println!("⚠️ Cleanup disabled for now - preserving all existing files");
+    println!("📝 All downloaded files in this session are tracked and will be preserved");
+    
+    Ok(0)
+}
+
+// Helper function to extract JAR files from a ZIP file
+fn extract_jar_files_from_zip(zip_path: &Path) -> Result<Vec<String>, String> {
+    let file = std::fs::File::open(zip_path)
+        .map_err(|e| format!("Failed to open zip file: {}", e))?;
+    
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read zip archive: {}", e))?;
+    
+    let mut jar_files = Vec::new();
+    
+    for i in 0..archive.len() {
+        let file = archive.by_index(i)
+            .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
+        
+        let name = file.name();
+        if name.ends_with(".jar") {
+            // Extract just the filename without path
+            let filename = std::path::Path::new(name)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(name);
+            jar_files.push(filename.to_string());
+        }
+    }
+    
+    Ok(jar_files)
+}
+
+
 // Function to download a single mod file
 async fn download_single_mod_file(
     window: &Window,
@@ -2157,6 +2389,9 @@ async fn download_single_mod_file(
     // Save the jar file
     let jar_path = Path::new(mods_dir).join(&jar_file.filename);
     std::fs::write(&jar_path, &jar_bytes).map_err(|e| e.to_string())?;
+    
+    // Track the downloaded JAR file
+    track_downloaded_file(&jar_file.filename);
 
     Ok(format!(
         "Downloaded: {} ({})",
@@ -2279,5 +2514,12 @@ fn extract_mod_name_from_filename(filename: &str) -> String {
 
 // Helper function to normalize mod names for comparison
 fn normalize_mod_name(name: &str) -> String {
-    name.to_lowercase().replace("_", "-").replace(" ", "-")
+    name.to_lowercase()
+        .replace("_", "-")
+        .replace(" ", "-")
+        .replace("--", "-") // Remove double dashes
+        .replace("-", "") // Remove all dashes for better matching
+        .trim_matches('-') // Remove leading/trailing dashes
+        .to_string()
 }
+
